@@ -449,6 +449,11 @@ function assertStopped(runtime: HeadlessRuntime): void {
   if (active.length > 0) fail(`请先停止所有服务: ${active.map((service) => service.id).join(", ")}`);
 }
 
-main().catch((error: unknown) => {
-  fail(error instanceof Error ? error.message : String(error));
-});
+main()
+  .then(() => {
+    // The service watchdog keeps the event loop alive; one-shot commands exit.
+    if (!process.argv.slice(2).includes("serve")) process.exit(process.exitCode ?? 0);
+  })
+  .catch((error: unknown) => {
+    fail(error instanceof Error ? error.message : String(error));
+  });

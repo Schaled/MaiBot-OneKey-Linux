@@ -158,6 +158,7 @@ export class PayloadManager {
   async readSnowLumaUpstream(): Promise<SnowLumaUpstream> {
     const candidates = [
       join(this.paths.installRoot, "resources", SNOWLUMA_UPSTREAM_FILE),
+      join(this.paths.payloadRoot, "resources", SNOWLUMA_UPSTREAM_FILE),
       join(this.paths.payloadRoot, SNOWLUMA_UPSTREAM_FILE),
     ];
     for (const candidate of candidates) {
@@ -171,11 +172,13 @@ export class PayloadManager {
   }
 
   /** Copy resources/maibot-package (EULA/PRIVACY/pyproject manifest) into the payload. */
-  async ensureMaibotPackageResources(): Promise<string> {
+  async ensureMaibotPackageResources(sourceOverride?: string): Promise<string> {
     const target = join(this.paths.payloadRoot, "maibot");
     if (existsSync(join(target, "package.json"))) return target;
-    const source = join(this.paths.installRoot, "resources", "maibot-package");
-    if (!existsSync(source)) throw new Error(`缺少 maibot-package 模板: ${source}`);
+    const source = sourceOverride
+      ?? [join(this.paths.installRoot, "resources", "maibot-package"), join(this.paths.payloadRoot, "resources", "maibot-package")]
+        .find((candidate) => existsSync(candidate));
+    if (!source) throw new Error(`缺少 maibot-package 模板: ${join(this.paths.installRoot, "resources", "maibot-package")}`);
     await mkdir(this.paths.payloadRoot, { recursive: true });
     await cp(source, target, { recursive: true });
     return target;

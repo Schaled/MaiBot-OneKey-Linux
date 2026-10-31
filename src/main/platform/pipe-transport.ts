@@ -15,10 +15,13 @@ import type {
  * the session signals the whole group, which is what keeps grandchildren
  * (pip's build subprocesses, node workers) from surviving a stop.
  */
+const CLOSE_GRACE_MS = 800;
+
 export class PipeSessionTransport implements SessionTransport {
   private readonly child: ChildProcess;
   private readonly dataListeners = new Set<(chunk: string | Buffer) => void>();
   private readonly exitListeners = new Set<SessionExitListener>();
+  private groupReapTimer: NodeJS.Timeout | null = null;
   private exited = false;
 
   constructor(options: SessionTransportSpawnOptions) {
@@ -40,7 +43,23 @@ export class PipeSessionTransport implements SessionTransport {
       const message = `[transport] ${error.message}\n`;
       for (const listener of this.dataListeners) listener(message);
     });
+    this.child.on("exit", (code, signal) => {
+      // `exit` fires the moment the direct child dies. `close` additionally
+      // waits for the stdio pipes — which descendants inherit — so a service
+      // whose runner was SIGKILLed would otherwise stay invisible to the
+      // supervisor forever. Detect that case, reap the group, and report.
+      if (this.exited) return;
+      this.exited = true;
+      // signalGroup() refuses once exited; the reap must not.
+      this.groupReapTimer = setTimeout(() => this.signalGroupRaw("SIGKILL"), CLOSE_GRACE_MS);
+      for (const listener of this.exitListeners) listener({ code, signal: signal ?? null });
+    });
     this.child.on("close", (code, signal) => {
+      if (this.groupReapTimer) {
+        clearTimeout(this.groupReapTimer);
+        this.groupReapTimer = null;
+      }
+      if (this.exited) return;
       this.exited = true;
       for (const listener of this.exitListeners) listener({ code, signal });
     });
@@ -87,13 +106,23 @@ export class PipeSessionTransport implements SessionTransport {
   }
 
   dispose(): void {
+    if (this.groupReapTimer) {
+      clearTimeout(this.groupReapTimer);
+      this.groupReapTimer = null;
+    }
     this.dataListeners.clear();
     this.exitListeners.clear();
   }
 
   private signalGroup(signal: NodeJS.Signals): void {
+    if (this.exited) return;
+    this.signalGroupRaw(signal);
+  }
+
+  /** Signal regardless of the exited flag — used by the orphan-group reap. */
+  private signalGroupRaw(signal: NodeJS.Signals): void {
     const pid = this.child.pid;
-    if (!pid || this.exited) return;
+    if (!pid) return;
     if (process.platform === "win32") {
       try {
         this.child.kill(signal);

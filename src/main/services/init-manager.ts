@@ -923,6 +923,10 @@ export class InitManager {
   }
 
   async confirmAgreements(): Promise<StartupAgreementConfirmResult> {
+    if (process.env.MAIBOT_ONEKEY_SMOKE === "1") {
+      const stack = new Error().stack?.split("\n").slice(1, 5).join(" | ") ?? "";
+      console.error(`[agree-trace] confirmAgreements caller: ${stack.slice(0, 300)}`);
+    }
     const state = await this.getAgreementState();
     const missing = state.documents.find((document) => !document.exists);
     if (missing) {

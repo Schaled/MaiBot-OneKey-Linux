@@ -30,7 +30,9 @@
     "release:win:standard": "bun run release:win",
     "release:win:snowluma": "bun run release:check --snowluma-only && bun run release:patch-nsis && bun run build && bun run scripts/release/build-windows-variants.ts --snowluma-only",
     "pack:win": "bun run release:win",
-    "test": "bun test scripts/tests"
+    "test": "bun test scripts/tests",
+    "test:linux": "bun test scripts/tests/linux",
+    "payload:linux": "bun run scripts/linux/prepare-linux-payload.ts"
   },
   "dependencies": {
     "@radix-ui/react-slot": "^1.2.3",

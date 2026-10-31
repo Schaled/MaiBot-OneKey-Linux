@@ -179,7 +179,11 @@ export interface NetworkProxySettings {
 export interface RuntimePaths {
   /** Explicit local development selection; packaged applications retain instance compatibility. */
   maibotDevMode?: "pypi" | "source";
+  /** True for a shipped build. Hosts that have no packaging concept pass true. */
+  packaged: boolean;
   installRoot: string;
+  /** Directory holding the `runtime/`, `modules/` and `maibot/` payloads. */
+  payloadRoot: string;
   userDataRoot: string;
   defaultResourceRoot: string;
   resourceRoot: string;
@@ -853,8 +857,9 @@ export interface PtyDataEvent extends PtyOutputChunk {
 
 export interface PtyExitEvent {
   sessionId: string;
-  exitCode: number;
-  signal?: number;
+  /** Null when the process was terminated by a signal rather than exiting. */
+  exitCode: number | null;
+  signal?: number | string;
 }
 
 export interface PtyErrorEvent {

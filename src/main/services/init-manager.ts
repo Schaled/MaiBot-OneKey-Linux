@@ -1798,11 +1798,9 @@ export class InitManager {
 
     const qqBackend = await this.readQqBackend();
     if (qqBackend === "snowluma") {
-      return this.ensureBundledModuleSubtree("SnowLuma", [
-        "node.exe",
-        "index.mjs",
-        "launcher.bat",
-      ], {
+      return this.ensureBundledModuleSubtree("SnowLuma", process.platform === "win32"
+        ? ["node.exe", "index.mjs", "launcher.bat"]
+        : ["node", "index.mjs", "package.json", "release.json"], {
         excludeRelativePaths: ["config", "data", "logs"],
       });
     }
@@ -1815,7 +1813,7 @@ export class InitManager {
           join("node_modules", "ws", "package.json"),
         ]
       : [
-          "node.exe",
+          process.platform === "win32" ? "node.exe" : "node",
           "index.js",
           "config.json",
           join("napcat", "package.json"),
@@ -1830,9 +1828,11 @@ export class InitManager {
         join("napcat", "logs"),
       ],
     });
-    const launcher = await this.ensureNapCatLauncher();
-    if (launcher) {
-      changedFiles.push(launcher);
+    if (process.platform === "win32") {
+      const launcher = await this.ensureNapCatLauncher();
+      if (launcher) {
+        changedFiles.push(launcher);
+      }
     }
     return changedFiles;
   }

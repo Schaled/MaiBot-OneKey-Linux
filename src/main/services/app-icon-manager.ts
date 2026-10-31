@@ -1,8 +1,8 @@
-import { nativeImage } from "electron";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { AppIconId, AppIconOption, AppIconSettings, RuntimePaths } from "../../shared/contracts";
+import type { DecodedImage, ImageDecoder } from "../platform/types";
 
 const APP_ICON_SETTINGS_FILE = "app-icon-settings.json";
 const DEFAULT_APP_ICON_ID: AppIconId = "sprout";
@@ -42,11 +42,17 @@ export class AppIconManager {
   private readonly settingsPath: string;
   private readonly iconRoot: string;
   private readonly fallbackIconPath: string;
+  private readonly decoder: ImageDecoder;
 
-  constructor(paths: RuntimePaths, packaged: boolean) {
+  constructor(paths: RuntimePaths, decoder: ImageDecoder) {
     this.settingsPath = join(paths.userDataRoot, APP_ICON_SETTINGS_FILE);
-    this.iconRoot = packaged ? join(process.resourcesPath, "app-icons") : join(paths.installRoot, "resources", "app-icons");
-    this.fallbackIconPath = packaged ? join(process.resourcesPath, "icon.png") : join(paths.installRoot, "resources", "icon.png");
+    this.iconRoot = paths.packaged
+      ? join(paths.payloadRoot, "app-icons")
+      : join(paths.installRoot, "resources", "app-icons");
+    this.fallbackIconPath = paths.packaged
+      ? join(paths.payloadRoot, "icon.png")
+      : join(paths.installRoot, "resources", "icon.png");
+    this.decoder = decoder;
     this.selectedIconId = this.readSelectedIconId();
   }
 
@@ -62,9 +68,9 @@ export class AppIconManager {
     };
   }
 
-  createIcon(): Electron.NativeImage {
-    const icon = nativeImage.createFromPath(this.iconPath(this.selectedIconId));
-    return icon.isEmpty() ? nativeImage.createFromPath(this.fallbackIconPath) : icon;
+  createIcon(): DecodedImage {
+    const icon = this.decoder.fromPath(this.iconPath(this.selectedIconId));
+    return icon.isEmpty() ? this.decoder.fromPath(this.fallbackIconPath) : icon;
   }
 
   async select(iconId: AppIconId): Promise<AppIconSettings> {
@@ -113,5 +119,4 @@ export class AppIconManager {
       return undefined;
     }
   }
-
 }

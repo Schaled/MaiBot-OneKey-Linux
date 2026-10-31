@@ -1,12 +1,11 @@
-import { app, net, session } from "electron";
 import { readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { NetworkProxySettings, RuntimePaths } from "../../shared/contracts";
+import type { ProxyApplier } from "../platform/types";
 
 const NETWORK_PROXY_CONFIG_FILE = "network-proxy.json";
 const DEFAULT_PROXY_PORT = 7890;
-const ELECTRON_PROXY_BYPASS_RULES = "localhost,127.0.0.1,::1,<local>";
 const PROXY_ENV_BYPASS_RULES = "localhost,127.0.0.1,::1";
 const PROXY_ENV_KEYS = [
   "HTTP_PROXY",
@@ -30,11 +29,13 @@ const FORWARDED_PROXY_ENV_KEYS = [
 export class NetworkProxyManager {
   private readonly configPath: string;
   private readonly originalProxyEnv = new Map<string, string | undefined>();
+  private readonly applier: ProxyApplier;
   private cache: NetworkProxySettings;
   private fetchPatched = false;
 
-  constructor(paths: RuntimePaths) {
+  constructor(paths: RuntimePaths, applier: ProxyApplier) {
     this.configPath = join(paths.userDataRoot, NETWORK_PROXY_CONFIG_FILE);
+    this.applier = applier;
     for (const key of PROXY_ENV_KEYS) {
       this.originalProxyEnv.set(key, process.env[key]);
     }
@@ -49,7 +50,11 @@ export class NetworkProxyManager {
   async applyStoredSettings(): Promise<NetworkProxySettings> {
     this.installFetchHook();
     this.applyEnvironment(this.cache);
-    await this.applyElectronProxy(this.cache);
+    await this.applier.apply({
+      enabled: this.cache.enabled,
+      proxyRules: localProxyUrl(this.cache.port),
+      bypassRules: PROXY_ENV_BYPASS_RULES,
+    });
     return this.getSettings();
   }
 
@@ -82,37 +87,20 @@ export class NetworkProxyManager {
   }
 
   private installFetchHook(): void {
-    if (this.fetchPatched || !app.isReady() || typeof globalThis.fetch !== "function") {
+    if (this.fetchPatched || !this.applier.isReady() || !this.applier.fetch || typeof globalThis.fetch !== "function") {
       return;
     }
 
+    const hostFetch = this.applier.fetch.bind(this.applier);
     const originalFetch = globalThis.fetch.bind(globalThis);
     globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
       const request = input instanceof URL ? input.toString() : input;
       if (typeof request === "string" || isRequestLike(request)) {
-        return net.fetch(request, init) as unknown as Promise<Response>;
+        return hostFetch(request as string, init) as unknown as Promise<Response>;
       }
       return originalFetch(input, init);
     }) as typeof fetch;
     this.fetchPatched = true;
-  }
-
-  private async applyElectronProxy(settings: NetworkProxySettings): Promise<void> {
-    if (!app.isReady()) {
-      return;
-    }
-
-    const defaultSession = session.defaultSession;
-    if (settings.enabled) {
-      await defaultSession.setProxy({
-        mode: "fixed_servers",
-        proxyRules: localProxyUrl(settings.port),
-        proxyBypassRules: ELECTRON_PROXY_BYPASS_RULES,
-      });
-    } else {
-      await defaultSession.setProxy({ mode: "system" });
-    }
-    await defaultSession.closeAllConnections();
   }
 
   private applyEnvironment(settings: NetworkProxySettings): void {

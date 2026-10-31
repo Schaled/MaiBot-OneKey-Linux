@@ -23,6 +23,9 @@ import type {
   TerminalSettings,
 } from "../../shared/contracts";
 import type { PtySessionManager } from "../pty/pty-session-manager";
+import { createProcessController } from "../platform/process-controller";
+import { resolveNodeRuntime } from "../platform/node-runtime";
+import type { ProcessController } from "../platform/types";
 import { InitManager } from "./init-manager";
 import { LogStore } from "./log-store";
 import { PythonDependencyManager } from "./python-dependency-manager";
@@ -232,24 +235,6 @@ function createServiceSpecificEnv(
   };
 }
 
-function killWindowsProcessTree(pid: number, force: boolean): Promise<void> {
-  const args = force ? ["/F", "/T", "/PID", String(pid)] : ["/T", "/PID", String(pid)];
-  return new Promise((resolve, reject) => {
-    const child = spawn("taskkill", args, {
-      windowsHide: true,
-      stdio: "ignore",
-    });
-    child.once("error", reject);
-    child.once("exit", (code) => {
-      if (code === 0) {
-        resolve();
-        return;
-      }
-      reject(new Error(`taskkill exited with code ${code ?? "unknown"}`));
-    });
-  });
-}
-
 function probePort(port: number, host = "127.0.0.1", timeoutMs = 450): Promise<boolean> {
   return new Promise((resolve) => {
     const socket = new net.Socket();
@@ -453,6 +438,7 @@ export class ServiceManager extends EventEmitter {
     private readonly pty: PtySessionManager,
     private readonly pythonDependencyManager?: PythonDependencyManager,
     private readonly operationLock = new RuntimeOperationLock(),
+    private readonly processController: ProcessController = createProcessController(),
   ) {
     super();
     this.snowLumaWebuiAuth = new SnowLumaWebuiAuth(paths.snowlumaRoot, paths.userDataRoot);
@@ -1056,10 +1042,11 @@ export class ServiceManager extends EventEmitter {
     const qqBackend = this.initManager.getQqBackendSync();
     const snowLumaPorts = qqBackend === "snowluma" ? this.initManager.readSnowLumaServicePortsSync() : { webui: 5099, onebot: 7988 };
     const snowlumaRoot = this.paths.snowlumaRoot;
-    const snowlumaNode = join(snowlumaRoot, "node.exe");
+    const snowlumaNodeName = process.platform === "win32" ? "node.exe" : "node";
+    const snowlumaNode = join(snowlumaRoot, snowlumaNodeName);
     const snowlumaEntry = join(snowlumaRoot, "index.mjs");
     const napcatExe = join(napcatRoot, "NapCatWinBootMain.exe");
-    const napcatNode = join(napcatRoot, "node.exe");
+    const napcatNode = existsSync(join(napcatRoot, snowlumaNodeName)) ? join(napcatRoot, snowlumaNodeName) : resolveNodeRuntime(this.paths.runtimeRoot);
     const napcatNodeEntry = join(napcatRoot, "index.js");
     const napcatMacLauncher = join(napcatRoot, "napcat-macos-launch.sh");
     const napcatLauncherName = "napcat-launch.cmd";
@@ -1269,7 +1256,7 @@ export class ServiceManager extends EventEmitter {
     this.logs.append(definition.id, "system", force ? "external terminal force kill requested" : "external terminal stop requested");
 
     try {
-      await killWindowsProcessTree(state.pid, force);
+      await this.processController.killTree(state.pid, { force });
     } catch (error) {
       this.logs.append(definition.id, "system", `external terminal stop failed: ${String(error)}`);
     }

@@ -229,8 +229,20 @@ export class ResourceLocationManager extends EventEmitter {
         : await file("bot.py") && await dir("src");
       hint = "MaiBot 部署记录与 config 配置，或源码 bot.py 和 src";
     }
-    else if (key === "snowluma") { valid = await file("index.mjs") && await dir("native") && (process.platform !== "win32" || await file("node.exe")); hint = "index.mjs、native 和配套运行时"; }
-    else { valid = (await file("index.js") && (process.platform !== "win32" || await file("node.exe"))) || (await file("NapCatWinBootMain.exe") && await dir("napcat")) || (process.platform === "darwin" && await file("napcat-macos-launch.sh") && await dir("napcat")); hint = "NapCat 的入口和配套运行时"; }
+    else if (key === "snowluma") {
+      valid = await file("index.mjs") && await dir("native") && (
+        process.platform === "win32" ? await file("node.exe") : await file("node") || await file("node.exe"));
+      hint = "index.mjs、native 和配套运行时";
+    }
+    else {
+      const napcatNodeEntry = await file("index.js") && (
+        process.platform === "win32" ? await file("node.exe") : await file("node") || await file("node.exe"));
+      valid = napcatNodeEntry
+        || (await file("NapCatWinBootMain.exe") && await dir("napcat"))
+        || (process.platform === "darwin" && await file("napcat-macos-launch.sh") && await dir("napcat"))
+        || (process.platform === "linux" && await file("napcat-docker-compose.yml") && await dir("napcat"));
+      hint = "NapCat 的入口和配套运行时";
+    }
     if (!valid) throw new Error(`这不是有效的 ${labelForKey(key).replace("路径", "")} 目录：缺少 ${hint}。请选择直接包含这些文件的目录，而不是上级目录。`);
   }
   private assertNotInUse(target: string): void {

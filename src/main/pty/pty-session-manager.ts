@@ -1,11 +1,8 @@
 import { EventEmitter } from "node:events";
-import { spawn as spawnChild } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { chmodSync, existsSync, statSync } from "node:fs";
-import { createRequire } from "node:module";
+import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
-import * as nodePty from "node-pty";
+import { basename, resolve } from "node:path";
 import type {
   PtyDataEvent,
   PtyBufferSnapshot,
@@ -17,15 +14,16 @@ import type {
   PtyStartRequest,
   PtyStopRequest,
 } from "../../shared/contracts";
-import { decodePtyData, encodePtyInput, getNodePtyEncoding, getWindowsCodePage } from "./encoding";
+import { decodePtyData, encodePtyInput, getWindowsCodePage } from "./encoding";
 import { PtyOutputHistory } from "./output-history";
+import type { SessionTransport, SessionTransportFactory } from "../platform/types";
+import { ptySessionTransportFactory } from "../platform/pty-transport";
 
 const MIN_COLS = 5;
 const MIN_ROWS = 5;
 const DEFAULT_COLS = 100;
 const DEFAULT_ROWS = 32;
 const DEFAULT_FORCE_AFTER_MS = 10_000;
-const require = createRequire(import.meta.url);
 
 type PtySessionEventMap = {
   data: [PtyDataEvent];
@@ -182,42 +180,8 @@ function createEnvironment(extraEnv: Record<string, string> | undefined): Record
   return env;
 }
 
-function toUnpackedAsarPath(path: string): string {
-  return path.replace("app.asar", "app.asar.unpacked").replace("node_modules.asar", "node_modules.asar.unpacked");
-}
-
-function ensureExecutable(path: string): void {
-  const stat = statSync(path);
-  if ((stat.mode & 0o111) !== 0) {
-    return;
-  }
-
-  chmodSync(path, stat.mode | 0o755);
-}
-
-function ensureNodePtySpawnHelperExecutable(): void {
-  if (process.platform === "win32") {
-    return;
-  }
-
-  let nodePtyPackagePath: string;
-  try {
-    nodePtyPackagePath = require.resolve("node-pty/package.json");
-  } catch {
-    return;
-  }
-
-  const packageRoot = dirname(nodePtyPackagePath);
-  const helperPath = toUnpackedAsarPath(
-    join(packageRoot, "prebuilds", `${process.platform}-${process.arch}`, "spawn-helper"),
-  );
-  if (existsSync(helperPath)) {
-    ensureExecutable(helperPath);
-  }
-}
-
 class PtySession {
-  private ptyProcess: nodePty.IPty | null = null;
+  private transport: SessionTransport | null = null;
   private readonly outputHistory = new PtyOutputHistory();
   private stopTimer: NodeJS.Timeout | null = null;
   private readonly createdAt = Date.now();
@@ -225,6 +189,7 @@ class PtySession {
 
   constructor(
     private readonly request: PtyStartRequest,
+    private readonly factory: SessionTransportFactory,
     private readonly emitEvent: <K extends keyof PtySessionEventMap>(
       event: K,
       ...args: PtySessionEventMap[K]
@@ -268,16 +233,13 @@ class PtySession {
     const command = resolveCommand(this.request, encoding);
 
     try {
-      ensureNodePtySpawnHelperExecutable();
-      this.ptyProcess = nodePty.spawn(command.file, command.args, {
-        name: "xterm-256color",
-        cols: this.snapshot.cols,
-        rows: this.snapshot.rows,
+      this.transport = this.factory.spawn({
+        file: command.file,
+        args: command.args,
         cwd: this.snapshot.cwd,
         env: createEnvironment(this.request.env),
-        encoding: getNodePtyEncoding(encoding),
-        handleFlowControl: true,
-        useConpty: true,
+        cols: this.snapshot.cols,
+        rows: this.snapshot.rows,
       });
     } catch (error) {
       this.markError(error);
@@ -286,13 +248,13 @@ class PtySession {
 
     this.snapshot = {
       ...this.snapshot,
-      pid: this.ptyProcess.pid,
+      pid: this.transport.pid,
       status: "running",
     };
     this.emitSnapshot();
 
-    this.ptyProcess.onData((data) => {
-      const decoded = decodePtyData(data as string | Buffer, encoding);
+    this.transport.onData((data) => {
+      const decoded = decodePtyData(data, encoding);
       this.emitEvent("data", {
         ...this.outputHistory.append(decoded, this.snapshot.cols, this.snapshot.rows),
         sessionId: this.id,
@@ -300,19 +262,19 @@ class PtySession {
       });
     });
 
-    this.ptyProcess.onExit(({ exitCode, signal }) => {
+    this.transport.onExit(({ code, signal }) => {
       this.clearStopTimer();
       this.snapshot = {
         ...this.snapshot,
         status: "exited",
-        exitCode,
-        signal,
+        exitCode: code ?? undefined,
+        signal: typeof signal === "number" ? signal : undefined,
         endedAt: Date.now(),
       };
       this.emitEvent("exit", {
         sessionId: this.id,
-        exitCode,
-        signal,
+        exitCode: code,
+        signal: signal ?? undefined,
       });
       this.emitSnapshot();
     });
@@ -321,11 +283,11 @@ class PtySession {
   }
 
   write(data: string): void {
-    if (!this.ptyProcess || this.status !== "running") {
+    if (!this.transport || this.status !== "running") {
       throw new Error("PTY session is not running");
     }
 
-    this.ptyProcess.write(encodePtyInput(data, this.snapshot.encoding));
+    this.transport.write(encodePtyInput(data, this.snapshot.encoding) as string);
   }
 
   resize(request: Omit<PtyResizeRequest, "sessionId">): void {
@@ -347,8 +309,8 @@ class PtySession {
       startedAt: this.createdAt,
     });
 
-    if (this.ptyProcess && this.status === "running") {
-      this.ptyProcess.resize(cols, rows);
+    if (this.transport && this.status === "running") {
+      this.transport.resize(cols, rows);
     }
 
     this.emitSnapshot();
@@ -356,11 +318,11 @@ class PtySession {
 
   clear(): void {
     this.outputHistory.clear();
-    this.ptyProcess?.clear();
+    this.transport?.clear();
   }
 
   stop(forceAfterMs = DEFAULT_FORCE_AFTER_MS): void {
-    if (!this.ptyProcess || this.status === "exited") {
+    if (!this.transport || this.status === "exited") {
       return;
     }
 
@@ -371,7 +333,7 @@ class PtySession {
     this.emitSnapshot();
 
     try {
-      this.ptyProcess.write("\x03");
+      this.transport.stop();
     } catch (error) {
       this.emitError(error);
     }
@@ -387,23 +349,15 @@ class PtySession {
   kill(): void {
     this.clearStopTimer();
 
-    if (!this.ptyProcess || this.status === "exited") {
+    if (!this.transport || this.status === "exited") {
       return;
     }
 
-    if (process.platform === "win32" && this.pid) {
-      const killer = spawnChild("taskkill", ["/F", "/T", "/PID", String(this.pid)], {
-        windowsHide: true,
-        stdio: "ignore",
-      });
-      killer.once("error", (error) => {
-        this.emitError(error);
-        this.ptyProcess?.kill();
-      });
-      return;
+    try {
+      this.transport.kill();
+    } catch (error) {
+      this.emitError(error);
     }
-
-    this.ptyProcess.kill();
   }
 
   getSnapshot(): PtySessionSnapshot {
@@ -451,6 +405,10 @@ export class PtySessionManager extends EventEmitter {
   private readonly sessions = new Map<string, PtySession>();
   private readonly preferredSizes = new Map<string, { cols: number; rows: number }>();
 
+  constructor(private readonly transportFactory: SessionTransportFactory = ptySessionTransportFactory) {
+    super();
+  }
+
   start(request: PtyStartRequest): PtySessionSnapshot {
     const session = new PtySession(
       {
@@ -460,6 +418,7 @@ export class PtySessionManager extends EventEmitter {
         ...request,
         ...(request.id ? this.preferredSizes.get(request.id) : undefined),
       },
+      this.transportFactory,
       (event, ...args) => {
         this.emit(event, ...args);
       },

@@ -15,7 +15,9 @@ export function createPreviewSnapshot(): DesktopSnapshot {
         : "linux",
   windowState: { isMaximized: false, isFullScreen: false, isFocused: true },
   paths: {
+    packaged: true,
     installRoot: "开发预览",
+    payloadRoot: "开发预览",
     userDataRoot: "开发预览",
     defaultResourceRoot: "开发预览",
     resourceRoot: "开发预览",

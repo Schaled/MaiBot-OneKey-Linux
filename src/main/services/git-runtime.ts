@@ -14,7 +14,7 @@ export async function resolveGitPath(runtimeRoot: string): Promise<string | unde
       ? [process.env.ProgramFiles, process.env["ProgramFiles(x86)"],
           process.env.LOCALAPPDATA && join(process.env.LOCALAPPDATA, "Programs")]
           .filter((root): root is string => Boolean(root)).map((root) => join(root, "Git", "cmd", executable))
-      : ["/usr/bin/git", "/usr/local/bin/git", "/opt/homebrew/bin/git"]),
+      : ["/usr/bin/git", "/usr/local/bin/git", "/usr/lib/git-core/git", "/snap/bin/git", "/opt/homebrew/bin/git"]),
   ];
   for (const candidate of new Set(candidates)) {
     if (!existsSync(candidate) || /[\\/]Microsoft[\\/]WindowsApps[\\/]git\.exe$/iu.test(candidate)) continue;

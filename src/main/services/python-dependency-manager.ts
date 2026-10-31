@@ -379,6 +379,28 @@ function hasMissingUploadTimes(versions: PythonPackageVersion[]): boolean {
   return versions.some((version) => version.uploadedAtMs === undefined);
 }
 
+/**
+ * POSIX equivalent of `taskkill /T /F`. Installer children are spawned detached,
+ * so the pid is a process-group leader; signalling the negated pid reaches every
+ * descendant (pip resolution, build subprocesses) instead of leaving orphans
+ * that hold the inherited stdio pipes open.
+ */
+function killDescendantsAndSelf(pid: number): void {
+  if (process.platform === "win32") {
+    execFile("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true }, () => undefined);
+    return;
+  }
+  for (const signal of ["SIGKILL"] as const) {
+    for (const target of [-pid, pid]) {
+      try {
+        process.kill(target as number, signal);
+      } catch {
+        // Already gone.
+      }
+    }
+  }
+}
+
 export class PythonDependencyManager {
   private startupUpgradePromise?: Promise<StartupDependencyUpgradeResult>;
   private startupUpgradeAbort?: AbortController;
@@ -679,7 +701,7 @@ export class PythonDependencyManager {
       if (process.platform === "win32") {
         execFile("taskkill", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true }, () => undefined);
       } else {
-        child.kill("SIGKILL");
+        killDescendantsAndSelf(child.pid);
       }
     }
     return true;
@@ -1271,6 +1293,9 @@ print(json.dumps(corrupt, ensure_ascii=False))
       const child = spawn(this.getPythonPath(), args, {
         cwd: this.paths.installRoot,
         windowsHide: true,
+        // Process-group leader: lets killDescendantsAndSelf reach pip's build
+        // subprocesses, which otherwise survive and hold the stdio pipes open.
+        detached: true,
         env: this.buildPythonProcessEnv(extraEnv),
       });
       let termination: Promise<void> | undefined;
@@ -1283,7 +1308,9 @@ print(json.dumps(corrupt, ensure_ascii=False))
               resolve();
             });
           });
-        } else child.kill("SIGKILL");
+        } else if (child.pid) {
+          killDescendantsAndSelf(child.pid);
+        }
       };
       signal?.addEventListener("abort", stopChild, { once: true });
       this.startupUpgradeChild = child;

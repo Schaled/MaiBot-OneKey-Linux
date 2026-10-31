@@ -19,6 +19,8 @@ import { registerAppIpc } from "./ipc/app";
 import { registerPtyIpc } from "./ipc/pty";
 import { PtySessionManager } from "./pty/pty-session-manager";
 import { InitManager } from "./services/init-manager";
+import { ElectronImageDecoder } from "./platform/electron-image-decoder";
+import { ElectronProxyApplier } from "./platform/electron-proxy-applier";
 import { acquireInstallInstanceLock } from "./services/instance-lock";
 import { AppIconManager } from "./services/app-icon-manager";
 import {
@@ -117,7 +119,7 @@ const resourceLock = (() => {
 })();
 const logStore = new LogStore(runtimePaths);
 const initManager = new InitManager(runtimePaths);
-const networkProxyManager = new NetworkProxyManager(runtimePaths);
+const networkProxyManager = new NetworkProxyManager(runtimePaths, new ElectronProxyApplier());
 const launcherUiSettingsManager = new LauncherUiSettingsManager(runtimePaths);
 const sourceSettingsManager = new SourceSettingsManager(runtimePaths);
 const moduleUpdater = new ModuleUpdater(runtimePaths);
@@ -138,7 +140,7 @@ const serviceManager = new ServiceManager(
   pythonDependencyManager,
   runtimeOperationLock,
 );
-const appIconManager = new AppIconManager(runtimePaths, app.isPackaged);
+const appIconManager = new AppIconManager(runtimePaths, new ElectronImageDecoder());
 const codexPetManager = new CodexPetManager();
 
 let mainWindow: BrowserWindow | null = null;
@@ -238,7 +240,11 @@ function createFallbackIcon(): Electron.NativeImage {
 
 function createAppIcon(): Electron.NativeImage {
   const icon = appIconManager.createIcon();
-  return icon.isEmpty() ? createFallbackIcon() : icon;
+  const native = icon.native as Electron.NativeImage | undefined;
+  if (native && !icon.isEmpty()) {
+    return native;
+  }
+  return createFallbackIcon();
 }
 
 function createTrayIcon(): Electron.NativeImage {

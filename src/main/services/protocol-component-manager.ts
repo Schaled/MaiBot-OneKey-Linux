@@ -1,7 +1,9 @@
 import { existsSync, type Dirent } from "node:fs";
 import { cp, mkdir, readdir, rename, rm } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
-import { runProcess, runWithoutAsar, samePath, sameOrInsidePath } from "./runtime-file-utils";
+import { runWithoutAsar, samePath } from "./runtime-file-utils";
+import { createProcessController } from "../platform/process-controller";
+import type { ProcessController, ProcessInfo } from "../platform/types";
 import type { QqComponentUpgradeEntry, QqComponentUpgradeId, QqComponentUpgradeResult, RuntimePaths, SnowLumaResetResult } from "../../shared/contracts";
 function toDetail(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 
@@ -52,12 +54,6 @@ interface BundledComponentUpgradeSpec {
   isProtectedPath: (relativePath: string) => boolean;
 }
 
-interface WindowsProcessInfo {
-  ProcessId?: number;
-  ExecutablePath?: string;
-  CommandLine?: string;
-}
-
 function isBusyComponentFsError(error: unknown): boolean {
   const code = typeof error === "object" && error !== null && "code" in error ? String((error as NodeJS.ErrnoException).code) : "";
   return code === "EBUSY" || code === "EPERM" || code === "ENOTEMPTY";
@@ -77,7 +73,10 @@ function normalizeQqComponentUpgradeError(componentName: string, error: unknown)
 
 /** Protocol payload maintenance is independent of MaiBot files and adapter runtime. */
 export class ProtocolComponentManager {
-  constructor(private readonly paths: Pick<RuntimePaths, "installRoot" | "napcatRoot" | "snowlumaRoot" | "bundledModulesRoot">) {}
+  constructor(
+    private readonly paths: Pick<RuntimePaths, "installRoot" | "napcatRoot" | "snowlumaRoot" | "bundledModulesRoot">,
+    private readonly processController: ProcessController = createProcessController(),
+  ) {}
   async resetSnowLumaComponent(): Promise<SnowLumaResetResult> {
     const bundledRoot = join(this.paths.bundledModulesRoot, "SnowLuma");
     const snowlumaRoot = this.paths.snowlumaRoot;
@@ -137,10 +136,6 @@ export class ProtocolComponentManager {
   }
 
   private async cleanupQqComponentProcesses(component?: QqComponentUpgradeId): Promise<void> {
-    if (process.platform !== "win32") {
-      return;
-    }
-
     const targetRoots = (component === "snowluma" ? [this.paths.snowlumaRoot] : component === "napcat" ? [this.paths.napcatRoot] : [this.paths.napcatRoot, this.paths.snowlumaRoot])
       .filter((path) => path.trim().length > 0)
       .map((path) => resolve(path));
@@ -148,69 +143,28 @@ export class ProtocolComponentManager {
       return;
     }
 
-    let processes: WindowsProcessInfo[] = [];
-    try {
-      processes = await this.listWindowsProcesses();
-    } catch {
-      return;
+    const matched = new Map<number, ProcessInfo>();
+    for (const root of targetRoots) {
+      for (const filter of [{ executableInside: root }, { commandLineIncludes: root }]) {
+        let processes: ProcessInfo[] = [];
+        try {
+          processes = await this.processController.listProcesses(filter);
+        } catch {
+          continue;
+        }
+        for (const item of processes) {
+          if (item.pid > 0 && item.pid !== process.pid) matched.set(item.pid, item);
+        }
+      }
     }
 
-    const currentPid = process.pid;
-    const targetPids = processes
-      .filter((item) => typeof item.ProcessId === "number" && item.ProcessId > 0 && item.ProcessId !== currentPid)
-      .filter((item) => this.isQqComponentProcess(item, targetRoots))
-      .map((item) => item.ProcessId as number);
-
-    const uniquePids = [...new Set(targetPids)];
+    const uniquePids = [...matched.keys()];
     if (uniquePids.length === 0) {
       return;
     }
 
-    await Promise.all(uniquePids.map((pid) => this.killWindowsProcessTree(pid).catch(() => undefined)));
+    await Promise.all(uniquePids.map((pid) => this.processController.killTree(pid, { force: true }).catch(() => undefined)));
     await new Promise((resolve) => setTimeout(resolve, 700));
-  }
-
-  private async listWindowsProcesses(): Promise<WindowsProcessInfo[]> {
-    const script = [
-      "$ErrorActionPreference = 'Stop'",
-      "Get-CimInstance Win32_Process |",
-      "Select-Object ProcessId,ExecutablePath,CommandLine |",
-      "ConvertTo-Json -Compress -Depth 2",
-    ].join(" ");
-    const output = await runProcess("powershell.exe", [
-      "-NoProfile",
-      "-ExecutionPolicy",
-      "Bypass",
-      "-Command",
-      script,
-    ], this.paths.installRoot, 12_000);
-    if (!output.trim()) {
-      return [];
-    }
-
-    const parsed = JSON.parse(output) as WindowsProcessInfo | WindowsProcessInfo[];
-    return Array.isArray(parsed) ? parsed : [parsed];
-  }
-
-  private isQqComponentProcess(processInfo: WindowsProcessInfo, targetRoots: string[]): boolean {
-    const executablePath = typeof processInfo.ExecutablePath === "string" ? processInfo.ExecutablePath : "";
-    if (executablePath && targetRoots.some((root) => sameOrInsidePath(root, executablePath))) {
-      return true;
-    }
-
-    const commandLine = typeof processInfo.CommandLine === "string" ? processInfo.CommandLine : "";
-    if (!commandLine) {
-      return false;
-    }
-
-    const normalizedCommandLine = commandLine.replace(/\//gu, "\\").toLowerCase();
-    return targetRoots
-      .map((root) => resolve(root).replace(/\//gu, "\\").toLowerCase())
-      .some((root) => normalizedCommandLine.includes(root));
-  }
-
-  private killWindowsProcessTree(pid: number): Promise<void> {
-    return runProcess("taskkill", ["/PID", String(pid), "/T", "/F"], this.paths.installRoot, 8_000).then(() => undefined);
   }
 
   private async upgradeBundledComponent(spec: BundledComponentUpgradeSpec): Promise<QqComponentUpgradeEntry> {

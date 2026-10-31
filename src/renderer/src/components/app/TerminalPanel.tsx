@@ -653,13 +653,13 @@ export function TerminalPanel({
           sessionsRef.current.set(event.sessionId, {
             ...existing,
             status: "exited",
-            exitCode: event.exitCode,
-            signal: event.signal,
+            exitCode: event.exitCode ?? undefined,
+            signal: typeof event.signal === "number" ? event.signal : undefined,
             endedAt: Date.now(),
           });
         }
         const instance = getTerminal(event.sessionId);
-        if (!instance.output.suspended) writeSystemLine(instance.terminal, `process exited with code ${event.exitCode}`);
+        if (!instance.output.suspended) writeSystemLine(instance.terminal, `process exited with code ${event.exitCode ?? "unknown"}`);
         notifySessionsChanged();
       }),
       bridge.pty.onError((event) => {

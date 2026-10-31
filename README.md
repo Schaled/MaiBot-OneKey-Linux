@@ -1,4 +1,57 @@
-# MaiBot OneKey Desktop
+# MaiBot OneKey Linux
+
+> 本仓库是 [Mai-with-u/MaiBotOneKey](https://github.com/Mai-with-u/MaiBotOneKey)（v0.7.3，GPL-3.0）的 Linux 移植。非官方发行，与上游及 MaiBot 团队无隶属关系；Linux 相关问题请反馈到这里，Windows 相关问题请到上游。
+>
+
+支持范围：x86_64，glibc ≥ 2.35（Ubuntu 22.04+ / Debian 12+ 实测定级）。真机 QQ 登录与消息收发需扫码验证，不在自动验收内。
+
+## Linux 用户快速开始
+
+**方式一：安装包（推荐）**
+
+```bash
+# AppImage（免安装）
+chmod +x MaiBot-OK-<version>-linux.AppImage && ./MaiBot-OK-<version>-linux.AppImage
+
+# 或 deb
+sudo dpkg -i MaiBot-OK-<version>-linux.deb
+```
+
+**方式二：从源码构建**
+
+```bash
+bun install
+bun run release:linux    # 构建 + 打包 AppImage/deb（含 node-pty 对 Electron ABI 重编译）
+```
+
+**方式三：Headless（无 GUI，服务器/常驻）**
+
+```bash
+bun install
+bun src/cli/main.ts eula --accept
+bun src/cli/main.ts install                    # PyPI 安装 maibot（含内嵌 Python 3.12 下载）
+bun src/cli/main.ts backend snowluma install   # 协议端（52MB，sha256 校验，gh-proxy 优先官方兜底）
+bun src/cli/main.ts serve                      # 前台 supervisor；任何 start 命令会自动拉起
+bun src/cli/main.ts start maibot               # WebUI: http://127.0.0.1:8001
+```
+
+Headless 完整命令面（`status/logs/install/rollback/backup/restore/backend/doctor`…）与目录布局见 **[docs/linux.md](docs/linux.md)**。
+
+
+## 与上游同步
+
+```bash
+git fetch upstream
+git rebase upstream/main     
+bun run typecheck && bun test scripts/tests && bun run test:linux
+git push --force-with-lease origin main
+```
+
+## 以下为继承自上游的开发文档（Windows 流程在本仓库保持可用）
+
+---
+
+# MaiBot OneKey Desktop（上游原文）
 
 MaiBot OneKey 的 Electron 桌面壳。当前桌面版负责初始化检查、服务启动/停止、单安装目录单实例、日志/状态展示，以及 MaiBot WebUI、NapCat WebUI、PTY 终端、设置状态页的统一入口。
 
@@ -154,3 +207,7 @@ release/latest-win-snowluma.yml
 - `.github/workflows/release-windows.yml`：手动触发 Windows x64 安装包构建，可输入 payload zip URL；zip 内需要包含 `runtime/` 和 `modules/`。
 
 更多发布细节见 [docs/release.md](docs/release.md)。
+
+## 许可
+
+GPL-3.0-only。基于上游 MotricSeven 及 MaiBot 社区的工作修改。

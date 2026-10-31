@@ -1,6 +1,6 @@
 # MaiBot OneKey — Linux 移植（linux-port 分支）
 
-P1（headless）已实现 Windows 版全部运维能力，不含 GUI。P2（Electron 桌面）在 P1 验收后进行。
+P1（headless）与 P2（Electron 桌面）均已完成并通过实机验收。
 
 ## 架构
 
@@ -75,3 +75,23 @@ MAIBOT_SMOKE_FULL=1 bun run test:linux
 
 `git remote add upstream https://github.com/Mai-with-u/MaiBotOneKey && git fetch upstream && git merge upstream/main`。
 平台差异集中在 `src/main/platform/` 与 `src/cli/`（新增文件），上游文件只留注入点小改。
+
+## P2：Electron 桌面（已完成）
+
+```bash
+bun run release:linux     # 构建 + 打包 AppImage/deb（含 node-pty 对 Electron ABI 重编译）
+```
+
+产物：`release/MaiBot-OK-0.7.3-linux.AppImage` / `.deb`（约 197MB / 149MB）。
+
+与 Windows 打包的差异：
+- node-pty 无 linux 预编译：构建时用 `@electron/rebuild` 对 Electron 38.8.6 的 ABI 重编（官方 headers 源；npmmirror 的 headers 包校验和不匹配，勿用 --dist-url）
+- 不打包含 git（系统 git）与 Node（SnowLuma 自带 node 24.22.1）
+- SnowLuma 不进 payload：GUI 启动/repair 时按需下载（gh-proxy 优先，sha256 固定，清单来自 resources/snowluma-upstream.json）
+- QQ 后端默认值：无内置 napcat 模板时默认 snowluma（`protocol-backend-manager.ts`）
+- 更新：复用既有 `.AppImage` 资产选择；下载后 `chmod 755` 再 `shell.openPath`
+- 无内置 QQ 组件时跳过启动器更新后的组件自动升级（`index.ts`）
+
+实机验收（KDE X11）：打包应用启动 → 协议确认 → repair 自动装 maibot 1.3.19 + 下载 SnowLuma → 内嵌 WebUI 设置向导渲染（127.0.0.1:8001/setup）→ 服务进程树正常。
+
+注意：直接运行 `linux-unpacked/` 需 `--no-sandbox`（chrome-sandbox 属主限制）；deb/AppImage 分发形态自动处理。

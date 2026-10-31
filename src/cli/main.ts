@@ -404,7 +404,13 @@ async function runNapCat(layout: ReturnType<typeof resolveHeadlessLayout>, _args
   const composeFile = join(layout.instanceRoot, "napcat", "napcat-docker-compose.yml");
   if (action === "compose" || action === undefined) {
     const { generateNapCatCompose } = await import("./napcat-compose");
-    const content = generateNapCatCompose({ instanceRoot: layout.instanceRoot, webuiPort: 6099, onebotPort: 7998 });
+    const runtime = createHeadlessRuntime({ instanceRoot: layout.instanceRoot, payloadRoot: layout.payloadRoot });
+    const content = generateNapCatCompose({
+      instanceRoot: layout.instanceRoot,
+      webuiPort: 6099,
+      onebotPort: 7998,
+      napcatConfigDir: join(runtime.paths.napcatRoot, "napcat", "config"),
+    });
     await mkdir(join(layout.instanceRoot, "napcat"), { recursive: true });
     await writeFile(composeFile, content, "utf8");
     console.log(`已生成 ${composeFile}`);

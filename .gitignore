@@ -211,3 +211,6 @@ cython_debug/
 
 # local reference artifact (Windows installer under analysis)
 /MaiBot-OK-*-win.exe
+
+# local build outputs (assembled by scripts/linux/prepare-linux-payload.ts)
+/payload/

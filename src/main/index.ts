@@ -11,7 +11,7 @@ import {
   Tray,
 } from "electron";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { AppIconId } from "../shared/contracts";
@@ -20,6 +20,7 @@ import { registerPtyIpc } from "./ipc/pty";
 import { PtySessionManager } from "./pty/pty-session-manager";
 import { InitManager } from "./services/init-manager";
 import { ElectronImageDecoder } from "./platform/electron-image-decoder";
+import { PayloadManager } from "./platform/payload-manager";
 import { ElectronProxyApplier } from "./platform/electron-proxy-applier";
 import { acquireInstallInstanceLock } from "./services/instance-lock";
 import { AppIconManager } from "./services/app-icon-manager";
@@ -128,7 +129,9 @@ const pythonDependencyManager = new PythonDependencyManager(
   sourceSettingsManager,
 );
 const maiBotDeploymentManager = new MaiBotDeploymentManager(runtimePaths, sourceSettingsManager);
+const payloadManager = new PayloadManager(runtimePaths);
 initManager.setDeploymentManager(maiBotDeploymentManager);
+initManager.setPayloadManager(payloadManager);
 moduleUpdater.setDeploymentManager(maiBotDeploymentManager);
 const ptySessionManager = new PtySessionManager();
 const QQ_COMPONENT_UPGRADE_STATE_FILE = "qq-component-upgrade-state.json";
@@ -139,6 +142,8 @@ const serviceManager = new ServiceManager(
   ptySessionManager,
   pythonDependencyManager,
   runtimeOperationLock,
+  undefined,
+  payloadManager,
 );
 const appIconManager = new AppIconManager(runtimePaths, new ElectronImageDecoder());
 const codexPetManager = new CodexPetManager();
@@ -334,6 +339,17 @@ async function upgradeQqComponentsAfterLauncherUpdate(): Promise<void> {
     }
   }
   if (previousVersion === currentVersion) {
+    return;
+  }
+
+  // Linux ships no bundled QQ-component payload (SnowLuma is fetched on
+  // demand, NapCat runs via Docker), so there is nothing to upgrade here.
+  const hasBundledQqComponents = existsSync(join(runtimePaths.bundledModulesRoot, "SnowLuma"))
+    || existsSync(join(runtimePaths.bundledModulesRoot, "napcat"));
+  if (process.platform === "linux" && !hasBundledQqComponents) {
+    logStore.append("desktop", "system", "Linux 载荷不含内置 QQ 组件，跳过启动器更新后的组件升级。");
+    await mkdir(runtimePaths.userDataRoot, { recursive: true });
+    await writeFile(statePath, `${JSON.stringify({ version: 1, launcherVersion: currentVersion, upgradedAt: Date.now(), components: [] }, null, 2)}\n`, "utf8");
     return;
   }
 

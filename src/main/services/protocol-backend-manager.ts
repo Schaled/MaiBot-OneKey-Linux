@@ -42,10 +42,15 @@ export class ProtocolBackendManager {
       const parsed = JSON.parse(readFileSync(this.qqBackendPath(), "utf8")) as { backend?: unknown };
       return parsed.backend === "snowluma" ? "snowluma" : "napcat";
     } catch {
-      return this.paths.bundledModulesRoot
-        && !existsSync(join(this.paths.bundledModulesRoot, "napcat"))
-        && existsSync(join(this.paths.bundledModulesRoot, "SnowLuma"))
-        ? "snowluma" : "napcat";
+      // The Windows payload ships both backends; Linux ships neither (SnowLuma
+      // is fetched on demand, NapCat runs via Docker), so default to the
+      // backend that can actually start on this machine.
+      const hasNapcatTemplate = existsSync(join(this.paths.bundledModulesRoot, "napcat"));
+      if (hasNapcatTemplate) return "napcat";
+      if (process.platform === "linux" || existsSync(join(this.paths.bundledModulesRoot, "SnowLuma"))) {
+        return "snowluma";
+      }
+      return "napcat";
     }
   }
 

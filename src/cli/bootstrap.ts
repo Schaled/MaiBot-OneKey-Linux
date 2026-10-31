@@ -64,7 +64,9 @@ export function createHeadlessRuntime(options: LayoutOptions = {}): HeadlessRunt
   const moduleUpdater = new ModuleUpdater(paths);
   const pythonDependencyManager = new PythonDependencyManager(paths, sourceSettingsManager);
   const maiBotDeploymentManager = new MaiBotDeploymentManager(paths, sourceSettingsManager);
+  const payloadManager = new PayloadManager(paths);
   initManager.setDeploymentManager(maiBotDeploymentManager);
+  initManager.setPayloadManager(payloadManager);
   moduleUpdater.setDeploymentManager(maiBotDeploymentManager);
   const ptySessionManager = new PtySessionManager(pipeSessionTransportFactory);
   const serviceManager = new ServiceManager(
@@ -75,6 +77,7 @@ export function createHeadlessRuntime(options: LayoutOptions = {}): HeadlessRunt
     pythonDependencyManager,
     runtimeOperationLock,
     createProcessController(),
+    payloadManager,
   );
   const resourceLocationManager = new ResourceLocationManager(paths, true, runtimeOperationLock, () => {
     const active = serviceManager
@@ -84,8 +87,6 @@ export function createHeadlessRuntime(options: LayoutOptions = {}): HeadlessRunt
       throw new Error(`请先停止所有服务，再操作组件目录：${active.map((service) => service.name).join("、")}`);
     }
   });
-  const payloadManager = new PayloadManager(paths);
-
   return {
     layout,
     paths,

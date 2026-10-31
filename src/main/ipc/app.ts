@@ -20,8 +20,7 @@ import {
   mkdir,
   readdir,
   rename,
-  rm,
-} from "node:fs/promises";
+  rm, chmod } from "node:fs/promises";
 import { cpus, freemem, loadavg, totalmem, uptime } from "node:os";
 import {
   basename,
@@ -3005,6 +3004,11 @@ export function registerAppIpc({
         child.unref();
         willQuit = true;
       } else {
+        if (process.platform === "linux" && installerPath.endsWith(".AppImage")) {
+          // Downloaded AppImages are not executable by default; openPath would
+          // silently do nothing without the bit set.
+          await chmod(installerPath, 0o755).catch(() => undefined);
+        }
         const openError = await shell.openPath(installerPath);
         if (openError) {
           throw new Error(`安装包打开失败：${openError}`);

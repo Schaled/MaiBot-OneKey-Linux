@@ -5,6 +5,8 @@ export interface NapCatComposeOptions {
   webuiPort: number;
   onebotPort: number;
   image?: string;
+  /** Absolute napcat config dir ProtocolBackendManager writes to. */
+  napcatConfigDir?: string;
 }
 
 /**
@@ -13,6 +15,10 @@ export interface NapCatComposeOptions {
  * instance's napcat config so `ProtocolBackendManager` writes land in the
  * container.
  */
+function composeQqVolume(options: NapCatComposeOptions): string {
+  return `${options.napcatConfigDir?.replace(/\/napcat\/config$/u, "") ?? "."}/qq`;
+}
+
 export function generateNapCatCompose(options: NapCatComposeOptions): string {
   const image = options.image ?? "mlikiowa/napcat-docker:latest";
   const project = `maibot-ok-napcat-${basename(options.instanceRoot).replace(/[^a-zA-Z0-9_-]/gu, "-")}`;
@@ -31,7 +37,7 @@ services:
       - "127.0.0.1:${options.webuiPort}:6099"
       - "127.0.0.1:${options.onebotPort}:3001"
     volumes:
-      - ./config:/app/napcat/config
-      - ./qq:/app/.config/QQ
+      - ${options.napcatConfigDir ?? "./config"}:/app/napcat/config
+      - ${options.napcatConfigDir ? composeQqVolume(options) : "./qq"}:/app/.config/QQ
 `;
 }

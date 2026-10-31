@@ -25,6 +25,7 @@ import type {
 import type { PtySessionManager } from "../pty/pty-session-manager";
 import { createProcessController } from "../platform/process-controller";
 import { resolveNodeRuntime } from "../platform/node-runtime";
+import { isSnowLumaRootValid, PayloadManager } from "../platform/payload-manager";
 import type { ProcessController } from "../platform/types";
 import { InitManager } from "./init-manager";
 import { LogStore } from "./log-store";
@@ -439,6 +440,7 @@ export class ServiceManager extends EventEmitter {
     private readonly pythonDependencyManager?: PythonDependencyManager,
     private readonly operationLock = new RuntimeOperationLock(),
     private readonly processController: ProcessController = createProcessController(),
+    private readonly payloadManager?: PayloadManager,
   ) {
     super();
     this.snowLumaWebuiAuth = new SnowLumaWebuiAuth(paths.snowlumaRoot, paths.userDataRoot);
@@ -565,6 +567,21 @@ export class ServiceManager extends EventEmitter {
     }
 
     if (serviceId === "napcat") {
+      // Linux has no bundled SnowLuma payload (EULA: fetched on demand); the
+      // Windows payload ships it, so this is a no-op there.
+      if (this.initManager.getQqBackendSync() === "snowluma" && !isSnowLumaRootValid(this.paths.snowlumaRoot)) {
+        if (!this.payloadManager) {
+          throw new Error("SnowLuma 尚未安装，且当前启动器缺少下载组件；请先运行 maibot-ok backend snowluma install。");
+        }
+        this.logs.append("napcat", "system", "SnowLuma 未安装，正在从官方 Release 下载（sha256 校验）…");
+        await this.payloadManager.ensureSnowLuma((progress) => {
+          if (progress.stage === "download" && progress.total) {
+            const percent = Math.min(99, Math.round(((progress.downloaded ?? 0) / progress.total) * 100));
+            this.setState("napcat", { ...this.getState("napcat"), detail: `正在下载 SnowLuma ${percent}%` });
+          }
+        });
+        this.logs.append("napcat", "system", `SnowLuma 已就绪: ${this.paths.snowlumaRoot}`);
+      }
       const repairedPaths = await this.initManager.ensureServiceReady("napcat");
       if (repairedPaths.length > 0) {
         this.logs.append(serviceId, "system", `startup repair copied ${repairedPaths.length} path(s): ${repairedPaths.join(", ")}`);

@@ -799,6 +799,8 @@ export class InitManager {
   private deploymentManager?: MaiBotDeploymentManager;
 
   setDeploymentManager(manager: MaiBotDeploymentManager): void { this.deploymentManager = manager; }
+  private payloadManager?: import("../platform/payload-manager").PayloadManager;
+  setPayloadManager(payloadManager: import("../platform/payload-manager").PayloadManager): void { this.payloadManager = payloadManager; }
   cancelMaiBotInstall(): boolean { return this.deploymentManager?.cancel() ?? false; }
   async ensureMaiBotPackage(onOutput?: (line: string) => void, onProgress?: (progress: MaiBotModuleUpdateProgress) => void): Promise<void> {
     if (this.deploymentManager?.isPackageMode()) {
@@ -1808,6 +1810,22 @@ export class InitManager {
 
     const qqBackend = await this.readQqBackend();
     if (qqBackend === "snowluma") {
+      // On Linux the runtime is provisioned on demand into the instance root
+      // (no bundled template, see ServiceManager.start); copying the bundled
+      // template over it would clobber a fetched install.
+      const bundledTemplate = join(this.paths.bundledModulesRoot, "SnowLuma");
+      if (!existsSync(bundledTemplate)) {
+        const target = this.paths.snowlumaRoot;
+        const required = process.platform === "win32" ? ["node.exe", "index.mjs"] : ["node", "index.mjs"];
+        if (!required.every((relative) => existsSync(join(target, relative)))) {
+          if (!this.payloadManager) {
+            throw new Error("SnowLuma 模板缺失且实例未安装；请运行 maibot-ok backend snowluma install。");
+          }
+          onProgress?.({ phase: "preparing", percent: 1, label: "下载 SnowLuma 协议端（sha256 校验）", updatedAt: Date.now() });
+          await this.payloadManager.ensureSnowLuma();
+        }
+        return [];
+      }
       return this.ensureBundledModuleSubtree("SnowLuma", process.platform === "win32"
         ? ["node.exe", "index.mjs", "launcher.bat"]
         : ["node", "index.mjs", "package.json", "release.json"], {

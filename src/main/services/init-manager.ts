@@ -1780,8 +1780,14 @@ export class InitManager {
   async ensureServiceReady(serviceId: ServiceId, onProgress?: (progress: MaiBotModuleUpdateProgress) => void): Promise<string[]> {
     await mkdir(this.paths.logsRoot, { recursive: true });
 
+    // The Windows payload always ships modules/ templates; a headless pypi-mode
+    // install may legitimately have none (SnowLuma is fetched on demand).
     if (!existsSync(this.paths.bundledModulesRoot)) {
-      throw new Error(`内置 modules 模板缺失: ${this.paths.bundledModulesRoot}`);
+      if (serviceId === "maibot" && isMaiBotPackageMode(this.paths)) {
+        await mkdir(this.paths.bundledModulesRoot, { recursive: true });
+      } else {
+        throw new Error(`内置 modules 模板缺失: ${this.paths.bundledModulesRoot}`);
+      }
     }
 
     if (serviceId === "maibot") {
